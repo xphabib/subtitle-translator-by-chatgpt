@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ChatGPT Batch Submitter</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 380px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      padding: 16px;
+    }
+
+    h1 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 14px;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    h1 span.dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #10a37f;
+      display: inline-block;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: #aaa;
+      font-size: 12px;
+    }
+
+    textarea {
+      width: 100%;
+      height: 160px;
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      color: #e0e0e0;
+      padding: 10px;
+      font-size: 13px;
+      resize: vertical;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    textarea:focus { border-color: #10a37f; }
+
+    .char-count {
+      text-align: right;
+      font-size: 11px;
+      color: #666;
+      margin-top: 4px;
+      margin-bottom: 12px;
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+      align-items: flex-end;
+    }
+
+    .field { flex: 1; }
+
+    input[type="number"] {
+      width: 100%;
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      color: #e0e0e0;
+      padding: 7px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input[type="number"]:focus { border-color: #10a37f; }
+
+    select {
+      width: 100%;
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      color: #e0e0e0;
+      padding: 7px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .preview {
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: #aaa;
+      margin-bottom: 14px;
+      min-height: 32px;
+    }
+
+    .preview strong { color: #10a37f; }
+
+    button#startBtn {
+      width: 100%;
+      padding: 10px;
+      background: #10a37f;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    button#startBtn:hover:not(:disabled) { background: #0d8c6c; }
+    button#startBtn:disabled { background: #3a3a3a; color: #666; cursor: not-allowed; }
+
+    button#stopBtn {
+      width: 100%;
+      padding: 10px;
+      background: #c0392b;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 8px;
+      display: none;
+      transition: background 0.15s;
+    }
+
+    button#stopBtn:hover { background: #a93226; }
+
+    button#exportBtn {
+      width: 100%;
+      padding: 10px;
+      background: transparent;
+      color: #10a37f;
+      font-size: 14px;
+      font-weight: 600;
+      border: 1px solid #10a37f;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    button#exportBtn:hover { background: #10a37f; color: #fff; }
+
+    .progress-wrap {
+      margin-top: 14px;
+      display: none;
+    }
+
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #aaa;
+      margin-bottom: 6px;
+    }
+
+    .progress-bar-bg {
+      background: #2a2a2a;
+      border-radius: 4px;
+      height: 6px;
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: #10a37f;
+      border-radius: 4px;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    .status {
+      margin-top: 10px;
+      font-size: 12px;
+      text-align: center;
+      color: #aaa;
+      min-height: 18px;
+    }
+
+    .status.error { color: #e74c3c; }
+    .status.success { color: #10a37f; }
+
+    .add-prefix {
+      margin-bottom: 12px;
+    }
+
+    input[type="text"].prefix-input {
+      width: 100%;
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      color: #e0e0e0;
+      padding: 7px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input[type="text"].prefix-input:focus { border-color: #10a37f; }
+  </style>
+</head>
+<body>
+  <h1><span class="dot"></span> ChatGPT Batch Submitter</h1>
+
+  <label for="textInput">Paste your large text</label>
+  <textarea id="textInput" placeholder="Paste large text here..."></textarea>
+  <div class="char-count"><span id="charCount">0</span> characters</div>
+
+  <div class="row">
+    <div class="field">
+      <label for="batchSize" id="batchSizeLabel">Batch size (chars)</label>
+      <input type="number" id="batchSize" value="3000" min="1" max="20000" step="1" />
+    </div>
+    <div class="field">
+      <label for="splitMode">Split at</label>
+      <select id="splitMode">
+        <option value="paragraph">Paragraph break</option>
+        <option value="sentence">Sentence end</option>
+        <option value="word">Word boundary</option>
+        <option value="exact">Exact character</option>
+        <option value="srt">Subtitle entries (SRT)</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="add-prefix" id="langWrap" style="display:none">
+    <label for="langInput">Translate to language</label>
+    <input type="text" id="langInput" class="prefix-input"
+           placeholder='e.g. Indonesian, Spanish, French…' />
+  </div>
+
+  <div class="add-prefix">
+    <label for="prefixInput">Prompt prefix <span id="prefixHint" style="color:#666;font-size:11px">(optional)</span></label>
+    <input type="text" id="prefixInput" class="prefix-input"
+           placeholder='e.g. "Continue reading: " or leave blank' />
+  </div>
+
+  <div class="preview" id="preview">Paste text above to see batch preview.</div>
+
+  <button id="startBtn">Submit to ChatGPT</button>
+  <button id="stopBtn">Stop</button>
+  <button id="exportBtn">Export Responses (.txt)</button>
+
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-label">
+      <span id="progressText">Batch 0 / 0</span>
+      <span id="progressPct">0%</span>
+    </div>
+    <div class="progress-bar-bg">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
