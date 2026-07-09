@@ -1,4 +1,5 @@
 const textInput     = document.getElementById('textInput');
+const fileInput     = document.getElementById('fileInput');
 const batchSizeEl   = document.getElementById('batchSize');
 const batchSizeLabel= document.getElementById('batchSizeLabel');
 const splitModeEl   = document.getElementById('splitMode');
@@ -16,10 +17,17 @@ const progressBar   = document.getElementById('progressBar');
 const progressText  = document.getElementById('progressText');
 const progressPct   = document.getElementById('progressPct');
 const statusEl      = document.getElementById('status');
+const sessionInfo   = document.getElementById('sessionInfo');
+const resetBtn      = document.getElementById('resetBtn');
 
 let collectedResponses = [];
 let exportAsSRT = false;
 let prefixAutoFilled = false; // true when prefix was set by auto-detect, not the user
+let currentSession = null;
+let currentRunTabId = null;
+
+const MAX_BATCHES_PER_RUN = 10;
+const SESSION_KEY = 'batchSubmitterSession';
 
 // ── SRT utilities ────────────────────────────────────────────────────────────
 
@@ -97,6 +105,99 @@ function applyPrefix(chunks, prefix, applyToAll = false) {
   return chunks.map((c, i) =>
     (applyToAll || i > 0) ? `${prefix.trim()}\n\n${c}` : c
   );
+}
+
+function getPreparedBatches() {
+  const text = textInput.value.trim();
+  const mode = splitModeEl.value;
+  const prefix = prefixEl.value;
+  let chunks;
+
+  if (mode === 'srt') {
+    const entries = parseSRTEntries(text);
+    const perBatch = Math.max(1, parseInt(batchSizeEl.value, 10) || 30);
+    chunks = batchSRTEntries(entries, perBatch);
+    chunks = applyPrefix(chunks, prefix, true);
+    return { chunks, exportAsSRT: true };
+  }
+
+  const batchSize = parseInt(batchSizeEl.value, 10) || 3000;
+  chunks = splitText(text, batchSize, mode);
+  chunks = applyPrefix(chunks, prefix, false);
+  return { chunks, exportAsSRT: false };
+}
+
+function makeSessionFingerprint(chunks, isSRTOutput) {
+  const source = JSON.stringify({
+    chunks,
+    isSRTOutput,
+    mode: splitModeEl.value,
+    batchSize: batchSizeEl.value,
+    prefix: prefixEl.value
+  });
+  let hash = 0;
+  for (let i = 0; i < source.length; i++) {
+    hash = ((hash << 5) - hash + source.charCodeAt(i)) | 0;
+  }
+  return `${source.length}:${hash}`;
+}
+
+function storageGet(key) {
+  return chrome.storage.local.get(key).then(result => result[key]);
+}
+
+function storageSet(key, value) {
+  return chrome.storage.local.set({ [key]: value });
+}
+
+function storageRemove(key) {
+  return chrome.storage.local.remove(key);
+}
+
+async function saveSession() {
+  if (currentSession) await storageSet(SESSION_KEY, currentSession);
+}
+
+async function loadSession() {
+  currentSession = await storageGet(SESSION_KEY) || null;
+  if (currentSession?.sourceText) {
+    textInput.value = currentSession.sourceText;
+    splitModeEl.value = currentSession.mode || 'paragraph';
+    if (splitModeEl.value === 'srt') {
+      enterSRTMode();
+    } else {
+      exitSRTMode();
+    }
+    batchSizeEl.value = currentSession.batchSize || batchSizeEl.value;
+    prefixEl.value = currentSession.prefix || '';
+    langInput.value = currentSession.lang || '';
+    prefixAutoFilled = false;
+  }
+  collectedResponses = currentSession?.responses || [];
+  exportAsSRT = !!currentSession?.exportAsSRT;
+  exportBtn.textContent = exportAsSRT
+    ? 'Export Subtitles (.srt)'
+    : 'Export Responses (.txt)';
+  updateSessionInfo();
+  if (currentSession) {
+    const done = Math.min(currentSession.nextIndex, currentSession.total);
+    setProgress(done, currentSession.total, done >= currentSession.total);
+  }
+}
+
+function updateSessionInfo() {
+  if (!currentSession) {
+    sessionInfo.textContent = 'No saved batch session.';
+    startBtn.textContent = 'Submit to ChatGPT';
+    return;
+  }
+
+  const done = Math.min(currentSession.nextIndex, currentSession.total);
+  const remaining = Math.max(0, currentSession.total - done);
+  sessionInfo.innerHTML =
+    `Saved progress: <strong>${done}</strong> / <strong>${currentSession.total}</strong> batches submitted. ` +
+    `<strong>${remaining}</strong> remaining. This tab run will send up to <strong>${MAX_BATCHES_PER_RUN}</strong>.`;
+  startBtn.textContent = remaining > 0 ? 'Continue in This Tab' : 'All Batches Submitted';
 }
 
 // ── SRT mode management ──────────────────────────────────────────────────────
@@ -185,6 +286,33 @@ function updatePreview() {
   startBtn.disabled = false;
 }
 
+fileInput.addEventListener('change', () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => { textInput.value = e.target.result; updatePreview(); };
+  reader.readAsText(file, 'utf-8');
+  fileInput.value = '';
+});
+
+// Drag-and-drop onto the textarea
+textInput.addEventListener('dragover', e => {
+  e.preventDefault();
+  textInput.style.borderColor = '#10a37f';
+});
+textInput.addEventListener('dragleave', () => {
+  textInput.style.borderColor = '#3a3a3a';
+});
+textInput.addEventListener('drop', e => {
+  e.preventDefault();
+  textInput.style.borderColor = '#3a3a3a';
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => { textInput.value = ev.target.result; updatePreview(); };
+  reader.readAsText(file, 'utf-8');
+});
+
 textInput.addEventListener('input', updatePreview);
 batchSizeEl.addEventListener('input', updatePreview);
 splitModeEl.addEventListener('change', () => {
@@ -206,11 +334,40 @@ langInput.addEventListener('input', updateAutoPrefix);
 // ── Progress updates from content script ─────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === 'PROGRESS') {
-    setProgress(msg.current, msg.total, msg.done);
+  if (msg.type === 'BATCH_SUBMITTED') {
+    if (!currentSession) return;
+    currentSession.nextIndex = Math.max(currentSession.nextIndex, msg.batchIndex + 1);
+    saveSession();
+    setProgress(currentSession.nextIndex, currentSession.total, false);
+    updateSessionInfo();
+  }
+  if (msg.type === 'BATCH_DONE') {
+    if (!currentSession) return;
+    if (typeof msg.response === 'string' && msg.response.trim()) {
+      currentSession.responses[msg.batchIndex] = msg.response.trim();
+      collectedResponses = currentSession.responses.filter(Boolean);
+      saveSession();
+      exportBtn.textContent = currentSession.exportAsSRT
+        ? 'Export Subtitles (.srt)'
+        : 'Export Responses (.txt)';
+    }
+  }
+  if (msg.type === 'RUN_COMPLETE') {
+    if (!currentSession) return;
+    setProgress(currentSession.nextIndex, currentSession.total, msg.allDone);
+    updateSessionInfo();
+    currentRunTabId = null;
+    setRunning(false);
+    if (msg.stopped) {
+      setStatus(`Stopped. Next run will continue from batch ${currentSession.nextIndex + 1}.`, 'error');
+    } else if (msg.allDone) {
+      setStatus('All batches submitted — export when ready.', 'success');
+    } else {
+      setStatus(`This tab reached ${MAX_BATCHES_PER_RUN} batches. Open or switch to a new ChatGPT tab to continue.`, 'success');
+    }
   }
   if (msg.type === 'RESPONSES') {
-    collectedResponses = msg.responses || [];
+    collectedResponses = msg.responses || collectedResponses;
     exportBtn.textContent = exportAsSRT
       ? 'Export Subtitles (.srt)'
       : 'Export Responses (.txt)';
@@ -219,16 +376,16 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 function setProgress(current, total, done) {
   progressWrap.style.display = 'block';
-  const pct = Math.round((current / total) * 100);
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
   progressBar.style.width = pct + '%';
-  progressText.textContent = `Batch ${current} / ${total}`;
+  progressText.textContent = `${current} / ${total} submitted`;
   progressPct.textContent = pct + '%';
 
   if (done) {
-    setStatus('All batches submitted — waiting for export…', 'success');
+    setStatus('All batches submitted — export when ready.', 'success');
     setRunning(false);
   } else {
-    setStatus(`Sending batch ${current} of ${total}…`);
+    setStatus(`Progress saved through batch ${current} of ${total}.`);
   }
 }
 
@@ -239,26 +396,40 @@ startBtn.addEventListener('click', async () => {
   const text = textInput.value.trim();
   if (!text) return setStatus('Please paste some text first.', 'error');
 
-  const mode = splitModeEl.value;
-  const prefix = prefixEl.value;
-  let chunks;
-
-  if (mode === 'srt') {
-    const entries = parseSRTEntries(text);
-    if (entries.length === 0) return setStatus('No valid SRT entries found.', 'error');
-    const perBatch = Math.max(1, parseInt(batchSizeEl.value, 10) || 30);
-    chunks = batchSRTEntries(entries, perBatch);
-    // Apply prefix to ALL batches (translation instruction needed on each)
-    chunks = applyPrefix(chunks, prefix, true);
-    exportAsSRT = true;
-  } else {
-    const batchSize = parseInt(batchSizeEl.value, 10) || 3000;
-    chunks = splitText(text, batchSize, mode);
-    chunks = applyPrefix(chunks, prefix, false);
-    exportAsSRT = false;
+  if (splitModeEl.value === 'srt' && parseSRTEntries(text).length === 0) {
+    return setStatus('No valid SRT entries found.', 'error');
   }
 
+  const prepared = getPreparedBatches();
+  const chunks = prepared.chunks;
+  exportAsSRT = prepared.exportAsSRT;
+
   if (chunks.length === 0) return setStatus('Nothing to send.', 'error');
+
+  const fingerprint = makeSessionFingerprint(chunks, exportAsSRT);
+  if (!currentSession || currentSession.fingerprint !== fingerprint) {
+    currentSession = {
+      fingerprint,
+      total: chunks.length,
+      nextIndex: 0,
+      responses: [],
+      exportAsSRT,
+      sourceText: text,
+      mode: splitModeEl.value,
+      batchSize: batchSizeEl.value,
+      prefix: prefixEl.value,
+      lang: langInput.value,
+      createdAt: Date.now()
+    };
+    collectedResponses = [];
+    await saveSession();
+  }
+
+  if (currentSession.nextIndex >= currentSession.total) {
+    setProgress(currentSession.total, currentSession.total, true);
+    updateSessionInfo();
+    return;
+  }
 
   let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.url || !tab.url.match(/https:\/\/(chat\.openai\.com|chatgpt\.com)/)) {
@@ -282,13 +453,22 @@ startBtn.addEventListener('click', async () => {
     }
   }
 
-  collectedResponses = [];
+  currentRunTabId = tab.id;
+  const startIndex = currentSession.nextIndex;
+  const runBatches = chunks.slice(startIndex, startIndex + MAX_BATCHES_PER_RUN);
   setRunning(true);
-  setProgress(0, chunks.length, false);
-  setStatus(`Starting — ${chunks.length} batch${chunks.length > 1 ? 'es' : ''} to send…`);
+  setProgress(startIndex, currentSession.total, false);
+  setStatus(`Starting at batch ${startIndex + 1}. This tab will send up to ${runBatches.length} batch${runBatches.length > 1 ? 'es' : ''}.`);
+  updateSessionInfo();
 
   try {
-    const resp = await chrome.tabs.sendMessage(tab.id, { type: 'SUBMIT_BATCHES', batches: chunks });
+    const resp = await chrome.tabs.sendMessage(tab.id, {
+      type: 'SUBMIT_BATCHES',
+      batches: runBatches,
+      startIndex,
+      total: currentSession.total,
+      maxBatches: MAX_BATCHES_PER_RUN
+    });
     if (resp && resp.error) {
       setStatus(resp.error, 'error');
       setRunning(false);
@@ -300,9 +480,10 @@ startBtn.addEventListener('click', async () => {
 });
 
 stopBtn.addEventListener('click', async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab) chrome.tabs.sendMessage(tab.id, { type: 'STOP' }).catch(() => {});
-  setStatus('Stopped.', 'error');
+  const tabId = currentRunTabId || (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id;
+  if (tabId) chrome.tabs.sendMessage(tabId, { type: 'STOP' }).catch(() => {});
+  const next = currentSession ? currentSession.nextIndex + 1 : 1;
+  setStatus(`Stopping. Progress is saved; next run will continue from batch ${next}.`, 'error');
   setRunning(false);
 });
 
@@ -334,6 +515,21 @@ exportBtn.addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
+resetBtn.addEventListener('click', async () => {
+  currentSession = null;
+  collectedResponses = [];
+  exportAsSRT = false;
+  await storageRemove(SESSION_KEY);
+  progressWrap.style.display = 'none';
+  progressBar.style.width = '0%';
+  progressText.textContent = '0 / 0 submitted';
+  progressPct.textContent = '0%';
+  exportBtn.textContent = 'Export Responses (.txt)';
+  updateSessionInfo();
+  updatePreview();
+  setStatus('Saved progress reset.', 'success');
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function setRunning(running) {
@@ -345,3 +541,7 @@ function setStatus(msg, type = '') {
   statusEl.textContent = msg;
   statusEl.className = 'status' + (type ? ` ${type}` : '');
 }
+
+loadSession().then(() => {
+  updatePreview();
+});

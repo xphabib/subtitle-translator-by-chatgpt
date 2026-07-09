@@ -7,7 +7,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      width: 380px;
+      width: 100%;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 13px;
       background: #1a1a1a;
@@ -114,6 +114,19 @@
 
     .preview strong { color: #10a37f; }
 
+    .session-info {
+      background: #202020;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: #aaa;
+      margin-bottom: 14px;
+      line-height: 1.4;
+    }
+
+    .session-info strong { color: #10a37f; }
+
     button#startBtn {
       width: 100%;
       padding: 10px;
@@ -162,6 +175,22 @@
     }
 
     button#exportBtn:hover { background: #10a37f; color: #fff; }
+
+    button#resetBtn {
+      width: 100%;
+      padding: 8px;
+      background: transparent;
+      color: #aaa;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    button#resetBtn:hover { border-color: #666; color: #fff; }
 
     .progress-wrap {
       margin-top: 14px;
@@ -225,8 +254,14 @@
 <body>
   <h1><span class="dot"></span> ChatGPT Batch Submitter</h1>
 
-  <label for="textInput">Paste your large text</label>
-  <textarea id="textInput" placeholder="Paste large text here..."></textarea>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+    <label for="textInput" style="margin-bottom:0">Paste your text or load a file</label>
+    <label style="cursor:pointer;font-size:12px;color:#10a37f;border:1px solid #10a37f;border-radius:5px;padding:3px 8px;white-space:nowrap">
+      Browse .srt
+      <input type="file" id="fileInput" accept=".srt,.txt" style="display:none" />
+    </label>
+  </div>
+  <textarea id="textInput" placeholder="Paste text here, click Browse .srt, or drag &amp; drop a file…"></textarea>
   <div class="char-count"><span id="charCount">0</span> characters</div>
 
   <div class="row">
@@ -259,10 +294,12 @@
   </div>
 
   <div class="preview" id="preview">Paste text above to see batch preview.</div>
+  <div class="session-info" id="sessionInfo">No saved batch session.</div>
 
   <button id="startBtn">Submit to ChatGPT</button>
   <button id="stopBtn">Stop</button>
   <button id="exportBtn">Export Responses (.txt)</button>
+  <button id="resetBtn">Reset Saved Progress</button>
 
   <div class="progress-wrap" id="progressWrap">
     <div class="progress-label">

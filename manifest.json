@@ -3,10 +3,15 @@
   "name": "ChatGPT Batch Submitter",
   "version": "1.0",
   "description": "Submit large text to ChatGPT in batches automatically",
-  "permissions": ["activeTab", "scripting", "tabs"],
+  "permissions": ["activeTab", "scripting", "tabs", "sidePanel", "storage", "unlimitedStorage"],
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "ChatGPT Batch Submitter"
+    "default_title": "Open ChatGPT Batch Submitter"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
   },
   "content_scripts": [
     {

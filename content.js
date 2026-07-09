@@ -131,6 +131,7 @@ function waitForResponse(timeoutMs = 180000) {
     function fail(msg) { cleanup(); reject(new Error(msg)); }
 
     function check() {
+      if (!isRunning) { done(); return; }
       if (Date.now() > deadline) { fail('Timed out waiting for ChatGPT response'); return; }
 
       const elapsed = Date.now() - startTime;
@@ -193,21 +194,31 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
     isRunning = true;
-    runBatches(message.batches)
+    runBatches(message.batches, message.startIndex || 0, message.total || message.batches.length)
       .then(() => sendResponse({ ok: true }))
       .catch(err => sendResponse({ error: err.message }));
     return true; // keep channel open for async response
   }
 });
 
-async function runBatches(batches) {
+function getLastAssistantResponse() {
+  const responses = collectResponses();
+  return responses[responses.length - 1] || '';
+}
+
+async function runBatches(batches, startIndex, total) {
+  let stopped = false;
+  let submittedCount = 0;
+
   for (let i = 0; i < batches.length; i++) {
-    if (!isRunning) break;
+    if (!isRunning) { stopped = true; break; }
+
+    const batchIndex = startIndex + i;
 
     chrome.runtime.sendMessage({
       type: 'PROGRESS',
-      current: i + 1,
-      total: batches.length,
+      current: batchIndex,
+      total,
       done: false
     }).catch(() => {});
 
@@ -223,23 +234,38 @@ async function runBatches(batches) {
       throw new Error('Could not submit — send button not found or disabled.');
     }
 
+    chrome.runtime.sendMessage({
+      type: 'BATCH_SUBMITTED',
+      batchIndex,
+      total
+    }).catch(() => {});
+    submittedCount++;
+
     // Wait for ChatGPT to finish (every batch, including the last)
     await waitForResponse();
+    if (!isRunning) { stopped = true; break; }
+
+    chrome.runtime.sendMessage({
+      type: 'BATCH_DONE',
+      batchIndex,
+      total,
+      response: getLastAssistantResponse()
+    }).catch(() => {});
+
     await sleep(600); // small buffer so the UI settles
   }
 
   isRunning = false;
 
+  const nextIndex = Math.min(startIndex + submittedCount, total);
+  const allDone = nextIndex >= total;
+
   chrome.runtime.sendMessage({
-    type: 'PROGRESS',
-    current: batches.length,
-    total: batches.length,
-    done: true
+    type: 'RUN_COMPLETE',
+    nextIndex,
+    total,
+    allDone,
+    stopped
   }).catch(() => {});
 
-  // Collect and send all assistant responses for export
-  chrome.runtime.sendMessage({
-    type: 'RESPONSES',
-    responses: collectResponses()
-  }).catch(() => {});
 }
